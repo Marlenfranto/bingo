@@ -56,3 +56,7 @@ GoogleService-Info.plist
 # Generated
 *.g.dart
 *.freezed.dart
+
+# Firebase Admin service-account keys (used by scripts/)
+scripts/service-account*.json
+scripts/node_modules/

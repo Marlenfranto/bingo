@@ -1,0 +1,64 @@
+rules_version = '2';
+
+// Namma Bingo Firestore rules.
+//
+// Threat model: signed-in users (anonymous auth is fine) can read other
+// players' public profile + game state to render scans, but can only
+// write their own profile and session. Questions and game config are
+// read-only from the client; populate them via admin console / CI.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Public profile. Any signed-in player can read (so we can show
+    // names on scans). Only the owner can write.
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create, update: if isSelf(uid)
+        && request.resource.data.name is string
+        && request.resource.data.email is string
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.email.size() <= 120;
+      allow delete: if false;
+    }
+
+    // Game config + questions are read-only from the client.
+    match /games/{gameId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+
+      match /questions/{questionId} {
+        allow read: if isSignedIn();
+        allow write: if false;
+      }
+
+      // A player's session doc is keyed by their uid; only they can write
+      // it. The path's {uid} already constrains identity via isSelf — no
+      // need to also require uid/gameId in the payload.
+      match /sessions/{uid} {
+        allow read: if isSignedIn();
+        allow create, update: if isSelf(uid);
+        allow delete: if false;
+      }
+
+      // Append-only scan log. Players can only create entries where they
+      // are the scanner; updates and deletes are forbidden.
+      match /scans/{scanId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn()
+          && request.resource.data.scannerUid == request.auth.uid
+          && request.resource.data.scannedUid is string
+          && request.resource.data.slotIndex is int;
+        allow update, delete: if false;
+      }
+    }
+  }
+}

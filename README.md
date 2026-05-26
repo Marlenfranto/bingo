@@ -1,170 +1,158 @@
-# LinkedIn QR Connector
+# Namma Bingo
 
-A Flutter web application that provides a 25-box grid interface for QR code scanning and automatic LinkedIn connection requests.
+A networking bingo for events. Each player generates a personal QR code;
+scanning someone else's fills a slot tied to a prompt ("Find someone who…").
+Backend is Firebase (Anonymous Auth + Firestore), client is Flutter
+targeting Web, Android, and iOS. Profile photos are intentionally not
+stored — see SCHEMA.md for the rationale.
 
-## Features
+## Stack
 
-- **25 Interactive Boxes Grid**: A responsive 5x5 grid where each box can be tapped to initiate QR scanning
-- **Camera QR Scanner**: Real-time QR code scanning using device camera
-- **LinkedIn Integration**: Automatic LinkedIn connection request sending after successful scan
-- **Profile Management**: User profile page with LinkedIn URL configuration
-- **One-time Scan Restriction**: Each user can only scan each box once
-- **Progressive Web App**: Runs smoothly in web browsers with camera access
+- **Flutter** + Material 3 dark theme.
+- **Riverpod 2** for state — `StreamProvider` for Firestore streams,
+  `AsyncNotifier` for write actions.
+- **go_router** with auth-aware redirects and custom page transitions
+  (fade/slide for top-level routes, cross-fade for shell tab swaps).
+- **Firebase**: Anonymous Auth, Firestore (rules + indexes committed),
+  Crashlytics (mobile only — Web isn't supported).
+- **QR**: `mobile_scanner` (ML Kit on Android, AVFoundation on iOS,
+  Barcode Detection API on Web) for scanning; `qr_flutter` for generation.
+  Scanner uses `DetectionSpeed.noDuplicates` + 1080p capture and silently
+  ignores non-Bingo QRs in frame for fewer false-positive dialogs.
+- **Models**: `freezed` + `json_serializable` with `explicit_to_json: true`
+  enabled globally via `build.yaml` (required so Firestore writes
+  recursively serialize nested freezed objects). Run codegen before the
+  first build.
 
-## How It Works
+## Setup
 
-1. **Setup Profile**: First-time users need to set up their profile with name and LinkedIn URL
-2. **Select Box**: Tap any of the 25 boxes to start scanning
-3. **Scan QR Code**: Camera opens automatically to scan someone else's LinkedIn QR code
-4. **Auto-Connect**: App automatically sends a LinkedIn connection request
-5. **Track Progress**: Visual feedback shows which boxes have been scanned
+```bash
+# 1. Install Flutter deps
+flutter pub get
 
-## Installation & Setup
+# 2. Run code generators (freezed/json_serializable)
+dart run build_runner build --delete-conflicting-outputs
 
-### Prerequisites
-- Flutter SDK (latest stable version)
-- Web browser with camera support
-- LinkedIn profile URL
+# 3. Configure Firebase (firebase_options.dart is committed; if you fork,
+#    regenerate with `flutterfire configure`)
 
-### Running the App
+# 4. Seed the first game's questions into Firestore (one-time)
+#    – Download a service account key from Firebase Console
+cd scripts && npm install
+GOOGLE_APPLICATION_CREDENTIALS=./service-account.json npm run seed
 
-1. **Clone/Navigate to project directory**:
-   ```bash
-   cd namma_bingo
-   ```
+# 5. Deploy security rules + indexes
+firebase deploy --only firestore:rules,firestore:indexes
+```
 
-2. **Install dependencies**:
-   ```bash
-   flutter pub get
-   ```
+## Run
 
-3. **Run on web**:
-   ```bash
-   flutter run -d chrome
-   # or for web server
-   flutter run -d web-server --web-port=3000
-   ```
+```bash
+flutter run -d chrome                          # web (camera needs HTTPS or localhost)
+flutter run -d <android-device-id>             # android
+flutter run -d <ios-device-id>                 # ios
+flutter analyze                                # lint
+flutter test                                   # unit + widget tests
+flutter test test/widget_test.dart             # single file
+flutter build web                              # production web build
+firebase deploy --only hosting                 # deploy build/web
+```
 
-4. **Build for production**:
-   ```bash
-   flutter build web
-   ```
+After codegen, the `*.freezed.dart` and `*.g.dart` siblings of model files
+must exist or the build fails. Re-run `dart run build_runner build` any
+time you edit a `@freezed` class.
 
-## App Structure
+## Project layout
 
 ```
 lib/
-├── main.dart                 # App entry point with routing
-├── models/
-│   └── user.dart            # User and BingoBox data models
-├── providers/
-│   └── app_providers.dart   # State management with Riverpod
-├── screens/
-│   ├── home_screen.dart     # Main 25-box grid interface
-│   ├── profile_screen.dart  # User profile setup/editing
-│   └── camera_screen.dart   # QR code scanning camera
-└── widgets/
-    └── bingo_grid.dart      # Reusable grid components
+  app/                       MaterialApp, router, bootstrap
+  core/                      Result, AppException, Logger, Env, platform shims
+  data/
+    models/                  freezed + json_serializable
+    repositories/            UserRepo, GameRepo, QuestionRepo, SessionRepo
+    sources/                 firestore_service
+  features/
+    auth/                    anonymous auth, providers, splash gate
+    bingo/                   dashboard, slot grid, providers
+    network/                 connections list
+    onboarding/              required first-run profile
+    profile/                 view/edit profile
+    qr/                      generator + scanner + payload
+      widgets/               scan_success_overlay (celebration after a scan)
+    scoreboard/              kiosk view at /scoreboard (podium + leaderboard)
+    shell/                   bottom-nav shell
+    splash/                  splash screen
+  shared/
+    theme/                   AppColors, AppTypography, AppSpacing, AppRadius, AppTheme
+    widgets/                 AppButton, AppCard, AppSkeleton, AppTextField,
+                             AppEmptyState, AppErrorState, ProfileAvatar,
+                             AnimatedEntry, AnimatedNumber, ConfettiBurst
+  main.dart                  → bootstrap()
+
+scripts/
+  seed_questions.mjs         one-shot Firestore seeder (firebase-admin)
+docs/
+  SCHEMA.md                  Firestore collections + indexes reference
+firestore.rules              security rules (deploy with firebase CLI)
+firestore.indexes.json       composite indexes
+build.yaml                   forces explicit_to_json so Firestore writes
+                             recursively serialize nested freezed types
 ```
 
-## Dependencies
+## How the QR protocol works
 
-- **flutter_riverpod**: State management
-- **mobile_scanner**: QR code scanning
-- **camera**: Camera access
-- **shared_preferences**: Data persistence
-- **url_launcher**: LinkedIn URL handling
-- **http/dio**: API requests
-- **permission_handler**: Camera permissions
+The generator emits a base64url-encoded JSON envelope:
 
-## Usage Instructions
+```json
+{
+  "app": "namma_bingo_app",
+  "signature": "BINGO_USER_V1",
+  "type": "bingo_user",
+  "uid": "...",
+  "name": "...",
+  "linkedinUrl": "..."
+}
+```
 
-### For First-Time Users:
-1. Open the app in your web browser
-2. Click "Setup Profile" to add your name and LinkedIn URL
-3. Save your profile to enable box scanning
+The scanner validates `app`/`type`/`signature` before accepting the
+payload. Anything that doesn't decode as a Bingo envelope is silently
+skipped (no dialog) so noise QRs in frame don't interrupt aiming —
+only "real" errors (own QR, slot conflict) surface as dialogs. To
+invalidate every existing QR (e.g. before a new event), bump
+`QR_SIGNATURE` in `.env`.
 
-### For Scanning:
-1. Tap any available (non-green) box
-2. Allow camera permissions when prompted
-3. Point camera at someone's LinkedIn QR code
-4. Wait for automatic processing and connection request
-5. Success dialog confirms the connection
+After a successful scan, a green flash plays over the camera, a
+full-screen celebration overlay (`showScanSuccessOverlay`) shows the
+scanned person's avatar + name + the prompt they satisfied, and the
+matching dashboard tile pops with a scale animation. The three are
+choreographed as one beat — don't insert async work between them.
 
-### LinkedIn QR Code:
-- LinkedIn profile → "More" → "QR code"
-- Share your QR code for others to scan
-- Scan others' QR codes to connect automatically
+## How state stays consistent
 
-## Features in Detail
+Every scan goes through `SessionRepository.recordScan`, which runs a
+Firestore transaction that:
 
-### State Management
-- Uses Riverpod for reactive state management
-- Persists user data and scan progress locally
-- Real-time UI updates across screens
+1. Reads the player's session doc.
+2. Checks the target slot isn't filled and the person isn't already
+   scanned (unless `ALLOW_REPETITIVE_PERSON_SCAN=true`).
+3. Writes the new slot + bumps `completedCount`.
+4. Appends to `games/{gameId}/scans/` for analytics.
 
-### Camera Integration
-- Mobile scanner for cross-platform QR detection
-- Torch/flash control for low light
-- Front/back camera switching
-- Visual scanning frame with indicators
+All four steps commit atomically. Conflicts surface as
+`ConflictException` and become a friendly retry dialog.
 
-### LinkedIn Integration
-- Validates LinkedIn URL format
-- Simulated connection request (demo mode)
-- Real implementation would use LinkedIn API
+## Live scoreboard
 
-### Responsive Design
-- 5x5 grid layout adapts to screen size
-- Card-based UI with Material Design 3
-- Clear visual states for scanned/available boxes
-
-## Browser Permissions
-
-The app requires camera permissions to function:
-- **Chrome**: Allow camera access when prompted
-- **Safari**: Enable camera in site settings
-- **Firefox**: Grant camera permissions in address bar
-
-## Development Notes
-
-### Camera Testing
-- Requires HTTPS in production for camera access
-- Use `flutter run -d chrome --web-browser-flag="--disable-web-security"` for local development
-- Test with actual LinkedIn QR codes for best experience
-
-### LinkedIn API (Production)
-- Currently uses simulated API calls
-- Real implementation needs LinkedIn Developer Account
-- OAuth 2.0 authentication required for connection requests
-- Rate limiting considerations for API calls
-
-## Troubleshooting
-
-**Camera not working?**
-- Check browser permissions
-- Ensure HTTPS connection
-- Try different browser or incognito mode
-
-**QR code not scanning?**
-- Ensure good lighting conditions
-- Hold steady and at appropriate distance
-- Use LinkedIn's official QR code format
-
-**Profile not saving?**
-- Check LinkedIn URL format
-- Ensure proper network connection
-- Clear browser cache if issues persist
-
-## Future Enhancements
-
-- Real LinkedIn API integration
-- User authentication system
-- Social features (leaderboards, teams)
-- Export/share functionality
-- Advanced scanning statistics
-- Offline mode support
+Open `/scoreboard` in a separate browser window (typically projected
+fullscreen at events) for a kiosk view: gold/silver/bronze podium for
+the top three, real-time leaderboard for ranks 4+, animated number
+counters, a one-shot winner banner with a confetti burst, and an
+ambient accent-gradient background. The route bypasses the standard
+auth redirect — it handles its own loading state, so opening the URL
+on a fresh device works. Bounded by attendee count (~200), so sorting
+client-side stays cheap; no composite index needed.
 
 ## License
 
-This project is for educational and demonstration purposes.
+Educational / demo project. Not licensed for production redistribution.

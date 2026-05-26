@@ -1,0 +1,10 @@
+targets:
+  $default:
+    builders:
+      # Firestore's native codec doesn't call `.toJson()` on nested objects,
+      # so freezed/json_serializable must emit explicit calls. Without this,
+      # `Map<String, BoxSlot>` writes crash with `Invalid argument: Instance
+      # of '_$BoxSlotImpl'`.
+      json_serializable:
+        options:
+          explicit_to_json: true

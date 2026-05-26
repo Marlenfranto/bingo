@@ -1,0 +1,11 @@
+{
+  "name": "namma-bingo-scripts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "seed": "node seed_questions.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0"
+  }
+}

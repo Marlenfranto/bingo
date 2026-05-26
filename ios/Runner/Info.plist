@@ -45,5 +45,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Namma Bingo needs the camera to scan QR codes from other players.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Not used. Declared because the scanner library links AVFoundation.</string>
 </dict>
 </plist>
